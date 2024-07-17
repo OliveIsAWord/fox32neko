@@ -9,22 +9,24 @@ const AWAKE_LENGTH: 8
 const UNCHILL_DIST_SQ: 49
 
 neko_entry:
-    icl
-    ; clear screen
-    mov r0, BLUE
-    call fill_background
-    ; create neko overlay
+    ; create neko overlay. if it already exists, then exit
     mov r0, OVERLAY
+    mov r2, 0x80000300
+    add r2, r0
+    icl ; start critical section: claiming overlay and adding vsync callback
+    in r1, r2
+    cmp r1, 0
+    ifnz ise
+    ifnz call end_current_task
     call enable_overlay
     mov r0, 32
     mov r1, 32
     mov r2, OVERLAY
     call resize_overlay
-    ; set vsync interrupt handler
     mov [PREV_VSYNC], [0x3FC]
     mov [0x3FC], neko_vsync
+    ise ; end critical section
 neko_loop:
-    icl
     ; only run every 8 frames
     mov r0, [EVERY_N_FRAMES]
     sub r0, 1
@@ -145,9 +147,9 @@ move_neko:
     iflt or r11, 1
     mov r13, r3
     sra r13, 8
-    sub r13, SPRITE_OFFSET_Y
+    sub r13, 46 ; SPRITE_OFFSET_Y + 16 (height of menubar)
     cmp r13, 0x80000000
-    ifgteq mov r13, SPRITE_OFFSET_Y
+    ifgteq mov r13, 46
     ifgteq sla r13, 8
     ifgteq mov r3, r13
     ifgteq or r11, 2
@@ -180,8 +182,8 @@ set_chill:
     iflt mov r0, SPRITE_OFFSET_X
     cmp r0, 624 ; 640 - 32 + SPRITE_OFFSET_X
     ifgt mov r0, 624
-    cmp r1, SPRITE_OFFSET_Y
-    iflt mov r1, SPRITE_OFFSET_Y
+    cmp r1, 46 ; SPRITE_OFFSET_Y + menubar
+    iflt mov r1, 46
     cmp r1, 480 ; 480 - 32 + SPRITE_OFFSET_Y
     ifgt mov r1, 480
     sla r0, 8
@@ -236,7 +238,7 @@ draw_chill_neko:
     iflteq rjmp draw_chill_neko_done
     mov r2, [NEKO_Y]
     sra r2, 8
-    cmp r2, SPRITE_OFFSET_Y
+    cmp r2, 46 ; SPRITE_OFFSET_Y + menubar
     iflteq mov r1, sprite_claw_up
     iflteq rjmp draw_chill_neko_done
     cmp r2, 479 ; 480 + 32 - SPRITE_OFFSET_Y - 2?
@@ -269,14 +271,19 @@ draw_neko:
     mov r2, OVERLAY
     call move_overlay
 neko_loop_end:
-    ise
-    halt
+    mov [HIT_VSYNC], 0
+wait_loop:
+    call yield_task
+    cmp [HIT_VSYNC], 0
+    ifnz rjmp neko_loop
+    rjmp wait_loop
 
 neko_vsync:
-    mov [rsp+5], neko_loop ; replace return address with the start of our loop
+    mov [HIT_VSYNC], 1
     jmp [PREV_VSYNC]
 
 PREV_VSYNC: data.32 0
+HIT_VSYNC: data.32 0
 FRAME_COUNTER: data.32 0
 NEKO_X: data.32 0x00014000 ; x = 320
 NEKO_Y: data.32 0x0000F000 ; y = 240
@@ -290,6 +297,7 @@ STATE_FRAME: data.32 AWAKE_LENGTH
 EVERY_N_FRAMES: data.32 1
 
     #include "../../fox32rom/fox32rom.def"
+    #include "../../fox32os/fox32os.def"
 
 sprite_awake:
     #include "assets_asm/awake.asm"
